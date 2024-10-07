@@ -5,7 +5,9 @@ import (
 	"image"
 	"image/png"
 	"io"
+	"io/ioutil"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync"
@@ -156,53 +158,88 @@ func TestTools_UploadOneFile(t *testing.T) {
 	}
 }
 
+func TestTools_CreateDirIfNotExists(t *testing.T) {
+	var testTools Tools
 
-func TestTools_CreateDirIfNotExists(t *testing.T)  {
-  var testTools Tools
+	err := testTools.CreateDirIfNotExists("./testdata/myDir")
 
-  err := testTools.CreateDirIfNotExists("./testdata/myDir")
+	if err != nil {
+		t.Error(err)
+	}
 
-  if err != nil {
-    t.Error(err)
-  }
+	err = testTools.CreateDirIfNotExists("./testdata/myDir")
 
-  err = testTools.CreateDirIfNotExists("./testdata/myDir")
+	if err != nil {
+		t.Error(err)
+	}
 
-  if err != nil {
-    t.Error(err)
-  }
-
-
-  os.Remove("./testdata/myDir")
+	os.Remove("./testdata/myDir")
 }
 
-
-var slugTests = []struct{
-  name string
-  s string
-  expected string
-  errorExpected bool
+var slugTests = []struct {
+	name          string
+	s             string
+	expected      string
+	errorExpected bool
 }{
-  {name: "valid string", s:"now is the time 123", expected: "now-is-the-time-123", errorExpected: false},
-  {name: "empty string", s:"", expected: "", errorExpected: true},
-  {name: "Now is the time for !!@2{){$)h}}", s:"Now is the time for !!@2{){$)h}}", expected: "now-is-the-time-for-2-h", errorExpected: false},
- {name: "japanese", s:"こんにちは", expected: "", errorExpected: true},
+	{name: "valid string", s: "now is the time 123", expected: "now-is-the-time-123", errorExpected: false},
+	{name: "empty string", s: "", expected: "", errorExpected: true},
+	{name: "Now is the time for !!@2{){$)h}}", s: "Now is the time for !!@2{){$)h}}", expected: "now-is-the-time-for-2-h", errorExpected: false},
+	{name: "japanese", s: "こんにちは", expected: "", errorExpected: true},
+	{name: "japanese", s: "hello worldこんにちは", expected: "hello-world", errorExpected: false},
 }
-func TestTools_Slugify(t *testing.T)  {
 
+func TestTools_Slugify(t *testing.T) {
+
+	var testTools Tools
+
+	for _, e := range slugTests {
+		slug, err := testTools.Slugify(e.s)
+
+		if err != nil && !e.errorExpected {
+			t.Errorf("test: %s -- unexpected error: %s", e.name, err)
+		}
+
+		if !e.errorExpected && slug != e.expected {
+			t.Errorf("expected %s got %s", e.expected, slug)
+		}
+	}
+
+}
+
+
+func TestTools_Download(t *testing.T) {
+  rr := httptest.NewRecorder()
+
+  req,_ := http.NewRequest("GET", "/", nil)
 
   var testTools Tools
 
-  for _, e := range slugTests {
-    slug, err := testTools.Slugify(e.s)
+  testTools.DownloadStaticFile(rr, req, "testdata", "pic.jpg", "puppy.jpg")
 
-     if err != nil && !e.errorExpected {
-       t.Errorf("test: %s -- unexpected error: %s", e.name, err)
-     }
 
-     if !e.errorExpected && slug != e.expected{
-       t.Errorf("expected %s got %s", e.expected, slug)
-     }
+  res := rr.Result()
+
+  defer res.Body.Close()
+
+  if res.Header["Content-Length"][0] != "98827"{
+    t.Error("incorrect content length", res.Header["Content-Length"][0])
   }
-  
+
+
+  if res.Header["Content-Disposition"][0] != "attachment; filename=\"puppy.jpg\"" {
+    t.Error("wrong content-diposition")
+  }
+
+
+  _, err := ioutil.ReadAll(res.Body)
+
+
+  if err != nil {
+    t.Error(err)
+  }
+
+
+    
+
 }
