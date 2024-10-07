@@ -1,6 +1,7 @@
 package toolkit
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -255,50 +256,76 @@ func (t *Tools) ReadJSON(w http.ResponseWriter, r *http.Request, data any) error
 
 }
 
-
 func (t *Tools) WriteJSON(w http.ResponseWriter, status int, data any, headers ...http.Header) error {
-  out, err := json.Marshal(data)
+	out, err := json.Marshal(data)
 
-  if err != nil {
-    return err
-  }
+	if err != nil {
+		return err
+	}
 
+	if len(headers) > 0 {
+		for key, value := range headers[0] {
+			w.Header()[key] = value
+		}
+	}
 
-  if len(headers) > 0 {
-    for key, value := range headers[0] {
-      w.Header()[key] = value
-    }
-  }
+	w.Header().Set("Content-Type", "application/json")
 
+	w.WriteHeader(status)
 
-  w.Header().Set("Content-Type", "application/json")
+	_, err = w.Write(out)
 
+	if err != nil {
+		return err
+	}
 
-  w.WriteHeader(status)
-
-  _, err = w.Write(out)
-
-  if err != nil {
-    return err
-  }
-
-  return nil
+	return nil
 }
 
-
 func (t *Tools) ErrorJSON(w http.ResponseWriter, err error, status ...int) error {
-  statusCode := http.StatusBadRequest
+	statusCode := http.StatusBadRequest
 
-  if len(status) > 0{
-    statusCode = status[0]
-  }
+	if len(status) > 0 {
+		statusCode = status[0]
+	}
 
+	var payload JSONResponse
 
-  var payload JSONResponse
+	payload.Error = true
 
-  payload.Error = true
+	payload.Message = err.Error()
 
-  payload.Message = err.Error()
+	return t.WriteJSON(w, statusCode, payload)
+}
 
-  return t.WriteJSON(w, statusCode, payload)
+func (t *Tools) PushJSONToRemote(uri string, data any, client ...*http.Client) (*http.Response, int, error) {
+	jsonData, err := json.Marshal(data)
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	httpClient := &http.Client{}
+	if len(client) > 0 {
+		httpClient = client[0]
+	}
+
+	request, err := http.NewRequest("POST", uri, bytes.NewBuffer(jsonData))
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := httpClient.Do(request)
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	defer response.Body.Close()
+
+	return response, response.StatusCode, nil
+
 }

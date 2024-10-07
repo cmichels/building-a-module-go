@@ -325,7 +325,7 @@ func TestTools_ErrorJson(t *testing.T) {
 	var testTool Tools
 
 	rr := httptest.NewRecorder()
-  status := http.StatusNotFound
+	status := http.StatusNotFound
 
 	err := testTool.ErrorJSON(rr, errors.New("some error"), status)
 
@@ -346,8 +346,45 @@ func TestTools_ErrorJson(t *testing.T) {
 		t.Error("expected true recieved fail")
 	}
 
-	if rr.Code != status{
+	if rr.Code != status {
 		t.Errorf("expected %d. received %d", status, rr.Code)
 	}
 
+}
+
+type RoundTripFunc func(req *http.Request) *http.Response
+
+func (f RoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req), nil
+}
+
+func NewTestClient(fn RoundTripFunc) *http.Client {
+	return &http.Client{
+		Transport: fn,
+	}
+}
+
+func TestTools_PushJsonToRemote(t *testing.T) {
+
+	client := NewTestClient(func(req *http.Request) *http.Response {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBufferString("ok")),
+			Header:     make(http.Header),
+		}
+	})
+
+	var testTool Tools
+
+	var foo struct {
+		Bar string `json:"bar"`
+	}
+
+	foo.Bar = "bar"
+
+	_, _, err := testTool.PushJSONToRemote("http://example.com/some/path", foo, client)
+
+	if err != nil {
+		t.Errorf("failed to call remote service: %s", err)
+	}
 }
