@@ -2,6 +2,7 @@ package toolkit
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,8 +21,10 @@ const randomStringSource = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ
 // Any variable of this type will have access to
 // all the methods with receiver *Tools
 type Tools struct {
-	MaxFileSize      int
-	AllowedFileTypes []string
+	MaxFileSize        int
+	AllowedFileTypes   []string
+	MaxJsonSize        int
+	AllowUnknownFields bool
 }
 
 // RandomString() returns a string of random characters
@@ -73,9 +76,9 @@ func (t *Tools) UploadFiles(r *http.Request, uploadDir string, rename ...bool) (
 		return nil, err
 	}
 
-  if err = t.CreateDirIfNotExists(uploadDir); err != nil{
-    return nil, err
-  }
+	if err = t.CreateDirIfNotExists(uploadDir); err != nil {
+		return nil, err
+	}
 
 	for _, fHeaders := range r.MultipartForm.File {
 		for _, hdr := range fHeaders {
@@ -162,35 +165,140 @@ func (t *Tools) CreateDirIfNotExists(path string) error {
 	return nil
 }
 
-
 func (t *Tools) Slugify(s string) (string, error) {
-  if s == ""{
-    return "", errors.New("empty string not permitted")
-  }
+	if s == "" {
+		return "", errors.New("empty string not permitted")
+	}
 
+	var re = regexp.MustCompile(`[^a-z\d]+`)
 
-  var re = regexp.MustCompile(`[^a-z\d]+`)
+	lower := strings.ToLower(s)
+	clean := re.ReplaceAllLiteralString(lower, "-")
+	slug := strings.Trim(clean, "-")
 
+	if len(slug) == 0 {
+		return "", errors.New("slug created with a length of zero")
+	}
 
-  lower := strings.ToLower(s)
-  clean := re.ReplaceAllLiteralString(lower, "-")
-  slug := strings.Trim(clean,"-")
+	return slug, nil
+}
 
+func (t *Tools) DownloadStaticFile(w http.ResponseWriter, r *http.Request, p, file, displayName string) {
+	fp := path.Join(p, file)
 
-  if len(slug) == 0{
-    return "", errors.New("slug created with a length of zero")
-  }
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=\"%s\"", displayName))
 
+	http.ServeFile(w, r, fp)
+}
 
-  return slug,nil 
+type JSONResponse struct {
+	Error   bool   `json:"error"`
+	Message string `json:"message"`
+	Data    any    `json:"data,omitempty"`
+}
+
+func (t *Tools) ReadJSON(w http.ResponseWriter, r *http.Request, data any) error {
+
+	maxBytes := 1024 * 1024
+
+	if t.MaxJsonSize != 0 {
+		maxBytes = t.MaxJsonSize
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, int64(maxBytes))
+
+	dec := json.NewDecoder(r.Body)
+
+	if !t.AllowUnknownFields {
+		dec.DisallowUnknownFields()
+	}
+
+	err := dec.Decode(data)
+	if err != nil {
+		var syntaxError *json.SyntaxError
+		var unmarshalTypeError *json.UnmarshalTypeError
+		var invalidUnmarshalError *json.InvalidUnmarshalError
+
+		switch {
+		case errors.As(err, &syntaxError):
+			return fmt.Errorf("body contains malformed JSON at %d", syntaxError.Offset)
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return errors.New("body contains malformed JSON")
+		case errors.As(err, &unmarshalTypeError):
+			if unmarshalTypeError.Field != "" {
+				return fmt.Errorf("body contains incorrect JSON type for field %q", unmarshalTypeError.Field)
+			}
+			return fmt.Errorf("body contains incorrect JSON type %d", unmarshalTypeError.Offset)
+		case errors.Is(err, io.EOF):
+			return errors.New("body must not be empty")
+		case strings.HasPrefix(err.Error(), "json: unknown field"):
+			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field")
+			return fmt.Errorf("body contains unknown key %s", fieldName)
+		case err.Error() == "http: request body too large":
+			return fmt.Errorf("body must not be larger than %d bytes", maxBytes)
+		case errors.As(err, &invalidUnmarshalError):
+			return fmt.Errorf("error unmarshalling JSON: %s", err.Error())
+		default:
+			return err
+
+		}
+	}
+
+	err = dec.Decode(&struct{}{})
+
+	if err != io.EOF {
+		return errors.New("body must contain only one JSON values")
+	}
+
+	return nil
+
 }
 
 
-func (t *Tools) DownloadStaticFile(w http.ResponseWriter, r *http.Request, p, file, displayName string)  {
-  fp := path.Join(p, file) 
+func (t *Tools) WriteJSON(w http.ResponseWriter, status int, data any, headers ...http.Header) error {
+  out, err := json.Marshal(data)
 
-  w.Header().Set("Content-Disposition", 
-  fmt.Sprintf("attachment; filename=\"%s\"", displayName))
+  if err != nil {
+    return err
+  }
 
-  http.ServeFile(w, r, fp)
+
+  if len(headers) > 0 {
+    for key, value := range headers[0] {
+      w.Header()[key] = value
+    }
+  }
+
+
+  w.Header().Set("Content-Type", "application/json")
+
+
+  w.WriteHeader(status)
+
+  _, err = w.Write(out)
+
+  if err != nil {
+    return err
+  }
+
+  return nil
+}
+
+
+func (t *Tools) ErrorJSON(w http.ResponseWriter, err error, status ...int) error {
+  statusCode := http.StatusBadRequest
+
+  if len(status) > 0{
+    statusCode = status[0]
+  }
+
+
+  var payload JSONResponse
+
+  payload.Error = true
+
+  payload.Message = err.Error()
+
+  return t.WriteJSON(w, statusCode, payload)
 }
