@@ -2,12 +2,15 @@ package toolkit
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 )
 
 const randomStringSource = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -156,4 +159,27 @@ func (t *Tools) CreateDirIfNotExists(path string) error {
 		}
 	}
 	return nil
+}
+
+
+func (t *Tools) Slugify(s string) (string, error) {
+  if s == ""{
+    return "", errors.New("empty string not permitted")
+  }
+
+
+  var re = regexp.MustCompile(`[^a-z\d]+`)
+
+
+  lower := strings.ToLower(s)
+  clean := re.ReplaceAllLiteralString(lower, "-")
+  slug := strings.Trim(clean,"-")
+
+
+  if len(slug) == 0{
+    return "", errors.New("slug created with a length of zero")
+  }
+
+
+  return slug,nil 
 }
