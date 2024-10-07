@@ -23,3 +23,6 @@ go.work.sum
 
 # env file
 .env
+toolkit/.DS_Store
+.DS_Store
+app-upload/uploads
